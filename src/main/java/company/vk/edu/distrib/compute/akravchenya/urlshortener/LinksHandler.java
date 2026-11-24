@@ -4,6 +4,8 @@ import com.sun.net.httpserver.HttpExchange;
 import company.vk.edu.distrib.compute.Dao;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.time.Instant;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -19,6 +21,7 @@ final class LinksHandler implements RequestHandler.ThrowingHandler {
     private Dao<String> links;
     private final Authentication authentication;
     private final int port;
+    private KafkaModerationConnector moderation;
 
     LinksHandler(Dao<String> links, Authentication authentication, int port) {
         this.links = links;
@@ -33,6 +36,18 @@ final class LinksHandler implements RequestHandler.ThrowingHandler {
      */
     void setDao(Dao<String> links) {
         this.links = links;
+    }
+
+    void setModeration(KafkaModerationConnector moderation) {
+        this.moderation = moderation;
+    }
+
+    void removeLink(String id) {
+        try {
+            links.delete(id);
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 
     @Override
@@ -64,6 +79,9 @@ final class LinksHandler implements RequestHandler.ThrowingHandler {
         Urls.requireLongLink(longLink);
         var linkId = generateFreeId();
         links.upsert(linkId, longLink);
+        if (moderation != null) {
+            moderation.notifyCreated(linkId, longLink, Instant.now());
+        }
         RequestHandler.send(exchange, 201, shortLink(linkId));
     }
 

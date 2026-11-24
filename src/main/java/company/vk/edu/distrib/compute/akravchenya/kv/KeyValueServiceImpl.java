@@ -4,9 +4,11 @@ import com.sun.net.httpserver.HttpServer;
 import company.vk.edu.distrib.compute.kv.KVService;
 
 import java.io.IOException;
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -17,6 +19,8 @@ import java.util.concurrent.Executors;
 final class KeyValueServiceImpl implements KVService {
 
     private static final String WORKER_THREADS_PROPERTY = "kv.workerThreads";
+    private static final Duration BIND_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration BIND_RETRY_DELAY = Duration.ofMillis(100);
 
     private final HttpServer server;
     private final HttpClient client;
@@ -24,7 +28,7 @@ final class KeyValueServiceImpl implements KVService {
     private boolean used;
 
     KeyValueServiceImpl(int port) throws IOException {
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this.server = createServer(port);
         this.client = HttpClient.newHttpClient();
         var storeDir = Files.createTempDirectory("kv-" + port + "-");
         var dao = new FileByteDao(storeDir);
@@ -53,6 +57,27 @@ final class KeyValueServiceImpl implements KVService {
         }
         server.stop(0);
         client.close();
+    }
+
+    private static HttpServer createServer(int port) throws IOException {
+        var address = new InetSocketAddress(port);
+        var deadline = System.nanoTime() + BIND_TIMEOUT.toNanos();
+        while (true) {
+            try {
+                return HttpServer.create(address, 0);
+            } catch (BindException exception) {
+                if (System.nanoTime() >= deadline) {
+                    throw exception;
+                }
+                try {
+                    Thread.sleep(BIND_RETRY_DELAY.toMillis());
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    exception.addSuppressed(interrupted);
+                    throw exception;
+                }
+            }
+        }
     }
 
     private void configureExecutor() {
